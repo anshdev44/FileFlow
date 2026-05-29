@@ -3,6 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const healthcheckRoute = require("./src/routes/healthcheck.route");
 const { checkconnection } = require("./src/controllers/checknetwork");
+const { checkip } = require("./src/controllers/getHostip");
 const app = express();
 const port = 3000;
 
@@ -14,14 +15,13 @@ const io = new Server(server, {
   },
 });
 
-
-
-
 // mount healthcheck route
 app.use("/healthcheck", healthcheckRoute);
 
 // endpoint to check current Wi-Fi connection
 app.get("/network", checkconnection);
+
+app.use('/getip',checkip)
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
