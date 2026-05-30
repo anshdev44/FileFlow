@@ -6,7 +6,7 @@ import FileTransferArea from './components/FileTransferArea';
 import RecentTransfers from './components/RecentTransfers';
 import DeviceRegistrationModal from './components/DeviceRegistrationModal';
 
-const socket = io();
+export const socket = io();
 
 function App() {
   const [showRegistration, setShowRegistration] = useState(false);

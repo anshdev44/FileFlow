@@ -4,11 +4,19 @@ let activeDvices = {}
 // let activeDevices = {
 //     "10.35": [
 //         {
-//             socketId: "Ka89XzLqP12",  
+//             socketId: "Ka89XzLqP12",
 //             deviceName: "Alex's MacBook Pro",
 //             ipAddress: "10.35.4.12",
 //             deviceType: "desktop"
 //         }
+//         {
+//             socketId: "Ka89XzLqP13",
+//             deviceName: "Alex's MacBook ",
+//             ipAddress: "10.35.4.11",
+//             deviceType: "mobile"
+
+//         }
+
 //     ]
 // };
 
@@ -19,7 +27,7 @@ const initializeSocket = (io) => {
     io.on("connection", (socket) => {
         // let clientIp = socket.handshake.headers['x-forwarded-for'] || socket.conn.remoteAddress;
         // if (clientIp.includes('::ffff:')) {
-        //     clientIp = clientIp.split('::ffff:')[1]; // Clean up to standard "10.35.x.x"
+        //     clientIp = clientIp.split('::ffff:')[1]; 
         // }
         // // Calculate the network prefix (e.g., "10.35")
         // console.log("cleint ip", clientIp);
@@ -29,11 +37,10 @@ const initializeSocket = (io) => {
         // console.log("ntwrok prefixes", networkPrefix);
         socket.on("Register-device", (payload) => {
             const { deviceName, deviceType, clientIp } = payload;
-            
-            // Calculate networkPrefix based on the provided clientIp (or a fallback if not provided)
-            const safeIp = clientIp ;
-            console.log("✅",safeIp);
-            if(!clientIp){
+
+            const safeIp = clientIp;
+            console.log("✅", safeIp);
+            if (!clientIp) {
                 socket.emit("no-client-ip");
             }
             const ipParts = safeIp.split('.');
@@ -63,6 +70,31 @@ const initializeSocket = (io) => {
 
             console.log(`📱 ${deviceName} registered successfully in subnet pool [${networkPrefix}]`);
             console.log("✅", activeDevices)
+        })
+
+        socket.on("Get-Nearby-Devices", (payload) => {
+
+            const socketid = socket.id;
+            const { clientip } = payload;
+            const ipParts = clientip.split('.');
+            const networkPrefix = `${ipParts[0]}.${ipParts[1]}`;
+            const devices = [];
+            for (let device of activeDevices[networkPrefix] || []) {
+                if (device.socketId !== socketid) {
+                    devices.push(device);
+                }
+            }
+            console.log(devices);
+
+        });
+
+        socket.on("disconnect", (socket) => {
+            const socketid = socket.id;
+            for (const network in activeDevices) {
+                console.log(network);
+                activeDevices[network] = activeDevices[network].filter((device) => { device.socketId !== socketid });
+            }
+            // io.to(networkPrefix).emit("NETWORK_DEVICES_UPDATED", activeDevices[networkPrefix]);
         })
     })
 }
