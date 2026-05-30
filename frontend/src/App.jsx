@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
 import Navbar from './components/Navbar';
 import DeviceList from './components/DeviceList';
 import FileTransferArea from './components/FileTransferArea';
 import RecentTransfers from './components/RecentTransfers';
 import DeviceRegistrationModal from './components/DeviceRegistrationModal';
+
+const socket = io();
 
 function App() {
   const [showRegistration, setShowRegistration] = useState(false);
@@ -16,17 +19,35 @@ function App() {
     } else {
       registerDevice(deviceName);
     }
+    
+    // Cleanup on unmount
+    return () => {
+      socket.off('Register-device');
+    };
   }, []);
 
   const registerDevice = async (name) => {
     try {
-      await fetch('/api/discovery/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceName: name,
-          deviceType: 'desktop'
-        }),
+      let clientIp = '127.0.0.1'; // Fallback if IP fetch fails
+      try {
+        const ipResponse = await fetch('/getip');
+        if (ipResponse.ok) {
+          const ipData = await ipResponse.json();
+          if (ipData.success && ipData.data) {
+            const interfaces = Object.values(ipData.data);
+            if (interfaces.length > 0 && interfaces[0].length > 0) {
+              clientIp = interfaces[0][0];
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to get IP before registering:', e);
+      }
+
+      socket.emit('Register-device', {
+        deviceName: name,
+        deviceType: 'desktop',
+        clientIp
       });
       setIsRegistered(true);
     } catch (error) {

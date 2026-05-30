@@ -2,26 +2,55 @@ import { Layers, Wifi, WifiOff } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export default function Navbar() {
-  const [networkStatus, setNetworkStatus] = useState({ connected: false, bssid: null, loading: true });
+  const [networkStatus, setNetworkStatus] = useState({ connected: false, bssid: null, ip: null, loading: true });
 
   useEffect(() => {
     const checkNetwork = async () => {
       try {
-        const response = await fetch('/network');
-        const data = await response.json();
-        
-        if (data.success && data.data?.connections?.length > 0) {
-          setNetworkStatus({ 
-            connected: true, 
-            bssid: data.data.connections[0].bssid || 'Local Network',
-            loading: false 
-          });
-        } else {
-          setNetworkStatus({ connected: false, bssid: null, loading: false });
+        let ip = null;
+        let isConnected = false;
+        let networkName = 'Local Network';
+
+        // 1. Try to get IP (this works for both Wi-Fi and Ethernet)
+        try {
+          const ipResponse = await fetch('/getip');
+          if (ipResponse.ok) {
+            const ipData = await ipResponse.json();
+            if (ipData.success && ipData.data) {
+              const interfaces = Object.values(ipData.data);
+              if (interfaces.length > 0 && interfaces[0].length > 0) {
+                ip = interfaces[0][0];
+                isConnected = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Error fetching IP:', e);
         }
+
+        // 2. Try to get Wi-Fi details for a more specific network name
+        try {
+          const wifiResponse = await fetch('/network');
+          if (wifiResponse.ok) {
+            const data = await wifiResponse.json();
+            if (data.success && data.data?.connections?.length > 0) {
+              networkName = data.data.connections[0].bssid || 'Wi-Fi Network';
+              isConnected = true;
+            }
+          }
+        } catch (e) {
+          console.error('Error checking wifi:', e);
+        }
+
+        setNetworkStatus({ 
+          connected: isConnected, 
+          bssid: isConnected ? networkName : null,
+          ip: ip,
+          loading: false 
+        });
       } catch (error) {
-        console.error('Error checking network:', error);
-        setNetworkStatus({ connected: false, bssid: null, loading: false });
+        console.error('Network check failed:', error);
+        setNetworkStatus({ connected: false, bssid: null, ip: null, loading: false });
       }
     };
 
@@ -44,7 +73,7 @@ export default function Navbar() {
           <>
             <Wifi className="w-4 h-4 text-green-500" />
             <span className="text-[var(--color-text-secondary)]">
-              Connected to {networkStatus.bssid}
+              Connected to {networkStatus.bssid} {networkStatus.ip ? `(${networkStatus.ip})` : ''}
             </span>
           </>
         ) : (

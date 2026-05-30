@@ -4,6 +4,7 @@ const { Server } = require("socket.io");
 const healthcheckRoute = require("./src/routes/healthcheck.route");
 const { checkconnection } = require("./src/controllers/checknetwork");
 const { checkip } = require("./src/controllers/getHostip");
+const { initializeSocket } = require("./src/sockets/socketManager");
 const app = express();
 const port = 3000;
 
@@ -15,6 +16,7 @@ const io = new Server(server, {
   },
 });
 
+initializeSocket(io);
 // mount healthcheck route
 app.use("/healthcheck", healthcheckRoute);
 
@@ -27,13 +29,7 @@ app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected");
-  });
-});
 
 server.listen(port, () => {
   console.log(`Server running on port ${port}`);
