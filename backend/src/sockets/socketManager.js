@@ -20,7 +20,7 @@ let activeDvices = {}
 //     ]
 // };
 
-// 💡 Stored in your server's RAM at the top of the file
+//  Stored in your server's RAM at the top of the file
 let activeDevices = {};
 
 const initializeSocket = (io) => {
