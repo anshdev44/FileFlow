@@ -1,4 +1,4 @@
-import { Laptop, Smartphone, Monitor, RefreshCw } from 'lucide-react';
+import { Laptop, Smartphone, Monitor, RefreshCw, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { socket } from '../App';
@@ -11,7 +11,7 @@ const getIcon = (type) => {
   }
 };
 
-export default function DeviceList() {
+export default function DeviceList({ onConnect, pendingDeviceId, connectedDeviceId }) {
   const [devices, setDevices] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -46,7 +46,6 @@ export default function DeviceList() {
 
   useEffect(() => {
     const handleDevicesUpdated = (activeDevices) => {
-      // Filter out our own device
       const nearbyDevices = activeDevices.filter(device => device.socketId !== socket.id);
       
       const mappedDevices = nearbyDevices.map(device => ({
@@ -92,30 +91,57 @@ export default function DeviceList() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {devices.map((device) => (
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              key={device.id}
-              className="flex items-center justify-between p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-text-primary)] cursor-pointer transition-colors shadow-sm"
-            >
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-[var(--color-background)] rounded-lg border border-[var(--color-border)]">
-                  {getIcon(device.type)}
-                </div>
-                <div className="flex flex-col">
-                  <span className="font-medium text-sm text-[var(--color-text-primary)]">{device.name}</span>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-xs text-[var(--color-text-secondary)] capitalize">{device.status} ({device.ip})</span>
+          {devices.map((device) => {
+            const isPending = pendingDeviceId === device.id;
+            const isConnected = connectedDeviceId === device.id;
+            return (
+              <motion.div
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                key={device.id}
+                className={`flex items-center justify-between p-4 rounded-xl border bg-[var(--color-surface)] cursor-pointer transition-colors shadow-sm ${
+                  isConnected 
+                    ? 'border-emerald-500/30 bg-emerald-500/5' 
+                    : 'border-[var(--color-border)] hover:border-[var(--color-text-primary)]'
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-[var(--color-background)] rounded-lg border border-[var(--color-border)]">
+                    {getIcon(device.type)}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="font-medium text-sm text-[var(--color-text-primary)]">{device.name}</span>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-xs text-[var(--color-text-secondary)] capitalize">{device.status} ({device.ip})</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <button className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-text-primary)] text-black hover:bg-gray-200 transition-colors shadow-sm">
-                Send
-              </button>
-            </motion.div>
-          ))}
+                {isConnected ? (
+                  <div className="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Connected
+                  </div>
+                ) : (
+                  <button
+                    id={`connect-device-${device.id}`}
+                    onClick={() => onConnect?.(device)}
+                    disabled={isPending || connectedDeviceId}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors shadow-sm flex items-center gap-1.5 disabled:cursor-not-allowed ${
+                      isPending
+                        ? 'bg-[var(--color-border)] text-[var(--color-text-secondary)]'
+                        : connectedDeviceId 
+                          ? 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] opacity-50'
+                          : 'bg-[var(--color-text-primary)] text-black hover:bg-gray-200'
+                    }`}
+                  >
+                    {isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {isPending ? 'Pending...' : 'Send'}
+                  </button>
+                )}
+              </motion.div>
+            );
+          })}
         </div>
       )}
     </div>

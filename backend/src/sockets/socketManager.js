@@ -69,7 +69,7 @@ const initializeSocket = (io) => {
             io.to(networkPrefix).emit("NETWORK_DEVICES_UPDATED", activeDevices[networkPrefix]);
 
             // console.log(` ${deviceName} registered successfully in subnet pool [${networkPrefix}]`);
-            console.log("new active devices list are", activeDevices )
+            console.log("new active devices list are", activeDevices)
         })
 
         socket.on("Get-Nearby-Devices", (payload) => {
@@ -86,12 +86,42 @@ const initializeSocket = (io) => {
             socket.emit("NETWORK_DEVICES_UPDATED", devices);
         });
 
-        socket.on("Connect-Device",(socket)=>{
-         const socketID=socket.id;
-         
+        socket.on("Connection", (payload) => {
+            const HostsocketID = socket.id;
+            const targetsocketID = payload.socketID;
+            const senderName = payload.senderName;
+
+            io.to(targetsocketID).emit("Connection-Request", {
+                senderName: senderName,
+                SenderSocketid: HostsocketID
+            });
         });
 
+        socket.on("Respond-Connection", (payload) => {
+            const { accepted, senderSocketId, acceptorName } = payload;
+            const targetSocketId = socket.id;
+
+            if (!accepted) {
+                io.to(senderSocketId).emit("Connection-Declined");
+            }
+            else if (accepted) {
+                let transactionRoomId = `transfer-${targetSocketId}-${senderSocketId}`;
+                console.log("room Requested accepted",targetSocketId,senderSocketId)
+                socket.join(transactionRoomId);
+                const senderSocket = io.sockets.sockets.get(senderSocketId);
+                if (senderSocket) {
+                    senderSocket.join(transactionRoomId);
+                }
+                io.to(senderSocketId).emit("Connection-Accepted", {
+                    transactionRoomId: transactionRoomId,
+                    acceptorName: acceptorName || "Device",
+                    acceptorSocketId: targetSocketId
+                });
+            }
+        });
         socket.on("disconnect", () => {
+            //           const socketid = socket.id;
+            // activeDevices[network] = activeDevices[network].filter((device) => { device.socketId !== socketid });
             const socketid = socket.id;
             for (const network in activeDevices) {
                 activeDevices[network] = activeDevices[network].filter((device) => device.socketId !== socketid);
