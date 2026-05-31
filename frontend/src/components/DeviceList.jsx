@@ -1,4 +1,4 @@
-import { Laptop, Smartphone, Monitor } from 'lucide-react';
+import { Laptop, Smartphone, Monitor, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { socket } from '../App';
@@ -13,6 +13,36 @@ const getIcon = (type) => {
 
 export default function DeviceList() {
   const [devices, setDevices] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchNearbyDevices = async () => {
+    setRefreshing(true);
+    try {
+      let clientIp = '127.0.0.1';
+      try {
+        const ipResponse = await fetch('/getip');
+        if (ipResponse.ok) {
+          const ipData = await ipResponse.json();
+          if (ipData.success && ipData.data) {
+            const allIps = Object.values(ipData.data).flat();
+            if (allIps.length > 0) {
+              const lanIp = allIps.find(ip => {
+                return ip.startsWith('192.168.') || ip.startsWith('10.') ||
+                  /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+              });
+              clientIp = lanIp || allIps[0];
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to get IP for refresh:', e);
+      }
+      socket.emit('Get-Nearby-Devices', { clientip: clientIp });
+    } catch (err) {
+      console.error('Failed to refresh devices:', err);
+    }
+    setTimeout(() => setRefreshing(false), 600);
+  };
 
   useEffect(() => {
     const handleDevicesUpdated = (activeDevices) => {
@@ -39,7 +69,20 @@ export default function DeviceList() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Nearby Devices</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Nearby Devices</h2>
+        <button
+          id="refresh-devices-btn"
+          onClick={fetchNearbyDevices}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-text-primary)] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw
+            className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
+          />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
       
       {devices.length === 0 ? (
         <div className="p-8 border border-dashed border-[var(--color-border)] rounded-xl flex flex-col items-center justify-center text-center bg-[var(--color-surface)] opacity-70">

@@ -39,7 +39,7 @@ const initializeSocket = (io) => {
             const { deviceName, deviceType, clientIp } = payload;
 
             const safeIp = clientIp;
-            console.log("✅", safeIp);
+            // console.log("✅", safeIp);
             if (!clientIp) {
                 socket.emit("no-client-ip");
             }
@@ -68,12 +68,11 @@ const initializeSocket = (io) => {
             //emitting event to notify everyone in the room that a person has joined;
             io.to(networkPrefix).emit("NETWORK_DEVICES_UPDATED", activeDevices[networkPrefix]);
 
-            console.log(`📱 ${deviceName} registered successfully in subnet pool [${networkPrefix}]`);
-            console.log("✅", activeDevices)
+            // console.log(` ${deviceName} registered successfully in subnet pool [${networkPrefix}]`);
+            console.log("new active devices list are", activeDevices )
         })
 
         socket.on("Get-Nearby-Devices", (payload) => {
-
             const socketid = socket.id;
             const { clientip } = payload;
             const ipParts = clientip.split('.');
@@ -84,17 +83,21 @@ const initializeSocket = (io) => {
                     devices.push(device);
                 }
             }
-            console.log(devices);
-
+            socket.emit("NETWORK_DEVICES_UPDATED", devices);
         });
 
-        socket.on("disconnect", (socket) => {
+        socket.on("Connect-Device",(socket)=>{
+         const socketID=socket.id;
+         
+        });
+
+        socket.on("disconnect", () => {
             const socketid = socket.id;
             for (const network in activeDevices) {
-                console.log(network);
-                activeDevices[network] = activeDevices[network].filter((device) => { device.socketId !== socketid });
+                activeDevices[network] = activeDevices[network].filter((device) => device.socketId !== socketid);
+                io.to(network).emit("NETWORK_DEVICES_UPDATED", activeDevices[network]);
             }
-            // io.to(networkPrefix).emit("NETWORK_DEVICES_UPDATED", activeDevices[networkPrefix]);
+            console.log("Device disconnected:", socketid, activeDevices);
         })
     })
 }

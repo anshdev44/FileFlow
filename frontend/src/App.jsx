@@ -34,9 +34,15 @@ function App() {
         if (ipResponse.ok) {
           const ipData = await ipResponse.json();
           if (ipData.success && ipData.data) {
-            const interfaces = Object.values(ipData.data);
-            if (interfaces.length > 0 && interfaces[0].length > 0) {
-              clientIp = interfaces[0][0];
+            // Collect all IPs from all interfaces
+            const allIps = Object.values(ipData.data).flat();
+            if (allIps.length > 0) {
+              // Prefer common LAN ranges: 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+              const lanIp = allIps.find(ip => {
+                return ip.startsWith('192.168.') || ip.startsWith('10.') ||
+                  /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+              });
+              clientIp = lanIp || allIps[0];
             }
           }
         }
