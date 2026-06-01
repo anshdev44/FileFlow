@@ -65,16 +65,27 @@ function App() {
       addToast('Connection request was declined.', 'error');
     };
 
+    // Room was closed by the other user
+    const handleRoomClosed = () => {
+      const deviceName = connectedDevice?.name || 'device';
+      setConnectedDevice(null);
+      setTransactionRoomId(null);
+      setTransferProgress(0);
+      addToast(`${deviceName} has disconnected from the room.`, 'info');
+    };
+
     socket.on('Connection-Request', handleConnectionRequest);
     socket.on('Connection-Accepted', handleConnectionAccepted);
     socket.on('Connection-Declined', handleConnectionDeclined);
+    socket.on('Room-Closed-Req', handleRoomClosed);
 
     return () => {
       socket.off('Connection-Request', handleConnectionRequest);
       socket.off('Connection-Accepted', handleConnectionAccepted);
       socket.off('Connection-Declined', handleConnectionDeclined);
+      socket.off('Room-Closed-Req', handleRoomClosed);
     };
-  }, [addToast]);
+  }, [addToast, connectedDevice?.name]);
 
   const registerDevice = async (name) => {
     try {
@@ -138,8 +149,8 @@ function App() {
       acceptorName: myName
     });
     setConnectedDevice({ name: connectionRequest.senderName, socketId: connectionRequest.senderSocketId });
-    // The room ID follows the backend pattern: transfer-{acceptor}-{sender}
-    setTransactionRoomId(`transfer-${socket.id}-${connectionRequest.senderSocketId}`);
+    // The room ID follows the backend pattern: {senderSocketId}-{acceptorSocketId}
+    setTransactionRoomId(`${connectionRequest.senderSocketId}-${socket.id}`);
     addToast(`Connected with ${connectionRequest.senderName}!`, 'success');
     setConnectionRequest(null);
   };
@@ -157,6 +168,11 @@ function App() {
 
   // Disconnect from current session
   const handleDisconnect = () => {
+    if (transactionRoomId) {
+      socket.emit('Disconnect-room', {
+        RoomName: transactionRoomId
+      });
+    }
     addToast(`Disconnected from ${connectedDevice?.name || 'device'}.`, 'info');
     setConnectedDevice(null);
     setTransactionRoomId(null);

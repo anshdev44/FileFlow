@@ -1,6 +1,3 @@
-let activeDvices = {}
-
-
 // let activeDevices = {
 //     "10.35": [
 //         {
@@ -23,7 +20,20 @@ let activeDvices = {}
 //  Stored in your server's RAM at the top of the file
 let activeDevices = {};
 
+
+
 const initializeSocket = (io) => {
+    const handleRoomCleanup = (socket, RoomName) => {
+        if (!RoomName) return;
+
+        const roomnameparts = RoomName.split('-');
+        if (roomnameparts.length < 2) return;
+
+        const otherUserSocketId = roomnameparts[0] === socket.id ? roomnameparts[1] : roomnameparts[0];
+        io.to(otherUserSocketId).emit("Room-Closed-Req");
+
+        io.in(RoomName).socketsLeave(RoomName);
+    };
     io.on("connection", (socket) => {
         // let clientIp = socket.handshake.headers['x-forwarded-for'] || socket.conn.remoteAddress;
         // if (clientIp.includes('::ffff:')) {
@@ -39,7 +49,7 @@ const initializeSocket = (io) => {
             const { deviceName, deviceType, clientIp } = payload;
 
             const safeIp = clientIp;
-            // console.log("✅", safeIp);
+
             if (!clientIp) {
                 socket.emit("no-client-ip");
             }
@@ -68,7 +78,7 @@ const initializeSocket = (io) => {
             //emitting event to notify everyone in the room that a person has joined;
             io.to(networkPrefix).emit("NETWORK_DEVICES_UPDATED", activeDevices[networkPrefix]);
 
-            // console.log(` ${deviceName} registered successfully in subnet pool [${networkPrefix}]`);
+            // console.log(` ${deviceName} registered successfully in  pool [${networkPrefix}]`);
             console.log("new active devices list are", activeDevices)
         })
 
@@ -105,8 +115,8 @@ const initializeSocket = (io) => {
                 io.to(senderSocketId).emit("Connection-Declined");
             }
             else if (accepted) {
-                let transactionRoomId = `transfer-${targetSocketId}-${senderSocketId}`;
-                console.log("room Requested accepted",targetSocketId,senderSocketId)
+                let transactionRoomId = `${senderSocketId}-${targetSocketId}`;
+                console.log("room Requested accepted", targetSocketId, senderSocketId)
                 socket.join(transactionRoomId);
                 const senderSocket = io.sockets.sockets.get(senderSocketId);
                 if (senderSocket) {
@@ -119,6 +129,22 @@ const initializeSocket = (io) => {
                 });
             }
         });
+
+        socket.on("Disconnect-room", (payload) => {
+            handleRoomCleanup(socket, payload.RoomName);
+        });
+
+        socket.on("disconnecting", () => {
+            const socketid = socket.id;
+            const currentRooms = Array.from(socket.rooms);
+
+            currentRooms.forEach(room => {
+                if (room.startsWith("transfer-") || room.includes('-')) {
+                    handleRoomCleanup(socket, room);
+                }
+            });
+        });
+
         socket.on("disconnect", () => {
             //           const socketid = socket.id;
             // activeDevices[network] = activeDevices[network].filter((device) => { device.socketId !== socketid });
