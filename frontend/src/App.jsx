@@ -111,9 +111,15 @@ function App() {
         console.error('Failed to get IP before registering:', e);
       }
 
+      const deviceType = 'desktop';
+      
+      // Store device info in localStorage for file transfer validation
+      localStorage.setItem('fileflow_device_type', deviceType);
+      localStorage.setItem('fileflow_device_ip', clientIp);
+
       socket.emit('Register-device', {
         deviceName: name,
-        deviceType: 'desktop',
+        deviceType: deviceType,
         clientIp
       });
       setIsRegistered(true);

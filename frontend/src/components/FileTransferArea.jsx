@@ -1,8 +1,110 @@
-import { UploadCloud, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { UploadCloud, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import CircularProgress from './CircularProgress';
+import { socket } from '../App';
+import { 
+  validateFile, 
+  formatFileSize, 
+  ALLOWED_FILE_TYPES
+} from '../utils/fileValidation';
 
 export default function FileTransferArea({ connectedDevice, transactionRoomId, transferProgress, onDisconnect }) {
+  const [maxAllowedSize, setMaxAllowedSize] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [validationError, setValidationError] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const fileInputRef = useRef(null);
+  const dragCounterRef = useRef(0);
+  const [isDragging, setIsDragging] = useState(false);
+
+ 
+  useEffect(() => {
+    if (!transactionRoomId) {
+      setIsLoading(true);
+      return;
+    }
+
+    const getMaxFileSize = () => {
+      const senderDeviceType = localStorage.getItem('fileflow_device_type') || 'desktop';
+      const ipAddress = localStorage.getItem('fileflow_device_ip') || '127.0.0.1';
+      
+      socket.emit('Max-Allowed-File-Size', {
+        targetSocketId: connectedDevice?.socketId,
+        senderDeviceType,
+        ipAddress
+      }, (response) => {
+        setMaxAllowedSize(response.allowedSize);
+        setIsLoading(false);
+      });
+    };
+
+    getMaxFileSize();
+  }, [transactionRoomId, connectedDevice?.socketId]);
+
+  const handleFileSelect = (file) => {
+    setSelectedFile(file);
+    setValidationError(null);
+
+    if (!maxAllowedSize) {
+      setValidationError('Loading device information...');
+      return;
+    }
+
+    const validation = validateFile(file, maxAllowedSize);
+    if (!validation.allowed) {
+      setValidationError(validation.reason);
+      setSelectedFile(null);
+    }
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      handleFileSelect(files[0]);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFileSelect(e.target.files[0]);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (selectedFile && !validationError) {
+      // TODO: Implement actual file upload to socket
+      console.log('Uploading file:', selectedFile);
+      // socket.emit('file-upload', { file: selectedFile, roomName: transactionRoomId });
+    }
+  };
+
   if (!connectedDevice) {
     return (
       <div className="flex flex-col gap-4 mt-8">
@@ -35,24 +137,138 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
         </button>
       </div>
 
+      {/* File Type and Size Restrictions */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {Object.entries(ALLOWED_FILE_TYPES).map(([key, category]) => (
+          <div key={key} className="border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] p-4">
+            <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">{category.label}</p>
+            <p className="text-xs text-[var(--color-text-secondary)]">
+              {category.extensions.join(', ')}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Max File Size Info */}
+      {maxAllowedSize && (
+        <div className="flex items-center gap-2 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+          <InfoIcon className="w-4 h-4 text-blue-400" />
+          <p className="text-xs text-blue-300">
+            Maximum file size: <span className="font-medium">{formatFileSize(maxAllowedSize)}</span>
+          </p>
+        </div>
+      )}
+
+      {/* File Upload Area */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Upload Drop Zone */}
         <motion.div 
-          whileHover={{ scale: 1.01 }}
-          className="relative border-2 border-dashed border-[var(--color-accent)] border-opacity-50 rounded-2xl bg-[var(--color-surface)] p-12 flex flex-col items-center justify-center gap-4 transition-colors hover:border-opacity-100 cursor-pointer shadow-sm"
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          whileHover={!isDragging ? { scale: 1.01 } : {}}
+          className={`relative border-2 border-dashed rounded-2xl bg-[var(--color-surface)] p-8 flex flex-col items-center justify-center gap-4 transition-all cursor-pointer shadow-sm min-h-64 ${
+            isDragging 
+              ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5' 
+              : 'border-[var(--color-accent)] border-opacity-50 hover:border-opacity-100'
+          }`}
+          onClick={() => !selectedFile && fileInputRef.current?.click()}
         >
-          <div className="p-4 bg-[var(--color-background)] rounded-full border border-[var(--color-border)] shadow-sm">
-            <UploadCloud className="w-8 h-8 text-[var(--color-text-primary)]" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-medium text-[var(--color-text-primary)]">Drag and drop your files here</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">or click to browse from your computer</p>
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleInputChange}
+            accept={Object.values(ALLOWED_FILE_TYPES)
+              .flatMap(cat => cat.extensions)
+              .join(',')}
+            className="hidden"
+          />
+          
+          {!selectedFile ? (
+            <>
+              <div className="p-4 bg-[var(--color-background)] rounded-full border border-[var(--color-border)] shadow-sm">
+                <UploadCloud className="w-8 h-8 text-[var(--color-text-primary)]" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                  {isDragging ? 'Drop your file here' : 'Drag and drop your file here'}
+                </p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">or click to browse</p>
+              </div>
+            </>
+          ) : (
+            <div className="w-full flex flex-col items-center justify-center gap-4">
+              {/* Selected File Info */}
+              <div className="w-full">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="flex items-start gap-3 flex-1">
+                    <div className="p-2.5 bg-[var(--color-background)] rounded-lg border border-[var(--color-border)] flex-shrink-0">
+                      <UploadCloud className="w-5 h-5 text-[var(--color-accent)]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{selectedFile.name}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                        Size: {formatFileSize(selectedFile.size)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedFile(null);
+                      setValidationError(null);
+                    }}
+                    className="text-[var(--color-text-secondary)] hover:text-red-400 transition-colors flex-shrink-0"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {validationError && (
+                  <div className="flex items-start gap-2 p-2.5 bg-red-500/10 border border-red-500/30 rounded mb-3">
+                    <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-300">{validationError}</p>
+                  </div>
+                )}
+
+                {!validationError && selectedFile && (
+                  <div className="flex items-center gap-2 p-2.5 bg-green-500/10 border border-green-500/30 rounded">
+                    <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    <p className="text-xs text-green-300">Ready to transfer</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Start Transfer Button */}
+              {!validationError && selectedFile && (
+                <button
+                  onClick={handleUploadClick}
+                  disabled={!selectedFile || validationError !== null}
+                  className="w-full px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+                >
+                  Start Transfer
+                </button>
+              )}
+            </div>
+          )}
         </motion.div>
-        
-        <div className="flex flex-col items-center justify-center border border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] p-8">
-           <CircularProgress progress={transferProgress} label="Ready to transfer" />
+
+        {/* Progress Indicator */}
+        <div className="flex items-center justify-center border border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] p-8 min-h-64">
+          <CircularProgress 
+            progress={transferProgress} 
+            label={isLoading ? 'Loading...' : transferProgress > 0 && transferProgress < 100 ? 'Transferring...' : 'Ready to transfer'} 
+          />
         </div>
       </div>
     </div>
   );
 }
+
+// Simple info icon since we're not importing from lucide-react for this one
+const InfoIcon = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
