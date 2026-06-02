@@ -217,6 +217,7 @@ function App() {
             connectedDevice={connectedDevice}
             transactionRoomId={transactionRoomId}
             transferProgress={transferProgress}
+            onTransferProgress={setTransferProgress}
             onDisconnect={handleDisconnect}
           />
         </div>

@@ -10,8 +10,6 @@ export default function Navbar() {
         let ip = null;
         let isConnected = false;
         let networkName = 'Local Network';
-
-        // 1. Try to get IP (this works for both Wi-Fi and Ethernet)
         try {
           const ipResponse = await fetch('/getip');
           if (ipResponse.ok) {
@@ -28,7 +26,7 @@ export default function Navbar() {
           console.error('Error fetching IP:', e);
         }
 
-        // 2. Try to get Wi-Fi details for a more specific network name
+    
         try {
           const wifiResponse = await fetch('/network');
           if (wifiResponse.ok) {
@@ -55,7 +53,6 @@ export default function Navbar() {
     };
 
     checkNetwork();
-    // Poll every 10 seconds to keep network status updated
     const intervalId = setInterval(checkNetwork, 10000);
     return () => clearInterval(intervalId);
   }, []);

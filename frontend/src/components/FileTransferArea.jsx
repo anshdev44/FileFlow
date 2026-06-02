@@ -1,53 +1,188 @@
-import { useState, useEffect, useRef } from 'react';
-import { UploadCloud, X, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { motion } from 'framer-motion';
-import CircularProgress from './CircularProgress';
-import { socket } from '../App';
-import { 
-  validateFile, 
-  formatFileSize, 
-  ALLOWED_FILE_TYPES
-} from '../utils/fileValidation';
+import { useState, useEffect, useRef } from "react";
+import { UploadCloud, X, AlertCircle, CheckCircle2 } from "lucide-react";
+import { motion } from "framer-motion";
+import CircularProgress from "./CircularProgress";
+import { socket } from "../App";
+import {
+  validateFile,
+  formatFileSize,
+  ALLOWED_FILE_TYPES,
+} from "../utils/fileValidation";
 
-export default function FileTransferArea({ connectedDevice, transactionRoomId, transferProgress, onDisconnect }) {
+export default function FileTransferArea({
+  connectedDevice,
+  transactionRoomId,
+  transferProgress,
+  onTransferProgress,
+  onDisconnect,
+}) {
   const [maxAllowedSize, setMaxAllowedSize] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [validationError, setValidationError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferMessage, setTransferMessage] = useState("Ready to transfer");
+  const [downloadInfo, setDownloadInfo] = useState(null);
   const fileInputRef = useRef(null);
   const dragCounterRef = useRef(0);
+  const incomingChunksRef = useRef([]);
+  const incomingSizeRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
 
- 
+  const updateProgress = (value) => {
+    const normalized = Math.max(0, Math.min(100, Math.round(value)));
+    if (onTransferProgress) {
+      onTransferProgress(normalized);
+    }
+  };
+
   useEffect(() => {
     if (!transactionRoomId) {
       setIsLoading(true);
+      setIsTransferring(false);
+      setTransferMessage("Ready to transfer");
+      setDownloadInfo(null);
+      updateProgress(0);
       return;
     }
 
     const getMaxFileSize = () => {
-      const senderDeviceType = localStorage.getItem('fileflow_device_type') || 'desktop';
-      const ipAddress = localStorage.getItem('fileflow_device_ip') || '127.0.0.1';
-      
-      socket.emit('Max-Allowed-File-Size', {
-        targetSocketId: connectedDevice?.socketId,
-        senderDeviceType,
-        ipAddress
-      }, (response) => {
-        setMaxAllowedSize(response.allowedSize);
-        setIsLoading(false);
-      });
+      const senderDeviceType =
+        localStorage.getItem("fileflow_device_type") || "desktop";
+      const ipAddress =
+        localStorage.getItem("fileflow_device_ip") || "127.0.0.1";
+
+      socket.emit(
+        "Max-Allowed-File-Size",
+        {
+          targetSocketId: connectedDevice?.socketId,
+          senderDeviceType,
+          ipAddress,
+        },
+        (response) => {
+          setMaxAllowedSize(response.allowedSize);
+          setIsLoading(false);
+        },
+      );
     };
 
     getMaxFileSize();
   }, [transactionRoomId, connectedDevice?.socketId]);
+
+  useEffect(() => {
+    if (!transactionRoomId) {
+      return;
+    }
+
+    const handleReceiveFileChunk = (payload) => {
+      const { chunkData, isLastChunk, fileName, totalSize } = payload;
+      const chunkLength = chunkData?.byteLength ?? chunkData?.length ?? 0;
+      incomingChunksRef.current.push(chunkData);
+      incomingSizeRef.current += chunkLength;
+
+      const currentProgress = totalSize
+        ? Math.round((incomingSizeRef.current / totalSize) * 100)
+        : 0;
+      updateProgress(currentProgress);
+      setTransferMessage(`Receiving ${fileName}...`);
+
+      if (isLastChunk) {
+        const fileBlob = new Blob(incomingChunksRef.current);
+        const downloadUrl = URL.createObjectURL(fileBlob);
+        setDownloadInfo({
+          name: fileName,
+          size: incomingSizeRef.current,
+          url: downloadUrl,
+        });
+        setTransferMessage(`${fileName} received`);
+        setIsTransferring(false);
+        incomingChunksRef.current = [];
+        incomingSizeRef.current = 0;
+      }
+    };
+
+    socket.on("RECEIVE_FILE_CHUNK", handleReceiveFileChunk);
+
+    return () => {
+      socket.off("RECEIVE_FILE_CHUNK", handleReceiveFileChunk);
+      incomingChunksRef.current = [];
+      incomingSizeRef.current = 0;
+    };
+  }, [transactionRoomId]);
+
+  const startFileStreaming = (socket, physicalFile, transactionRoomId) => {
+    if (!transactionRoomId || !physicalFile) return;
+
+    setIsTransferring(true);
+    setTransferMessage(`Sending ${physicalFile.name}...`);
+    setDownloadInfo(null);
+    updateProgress(0);
+
+    const CHUNK_SIZE = 64 * 1024;
+    let offset = 0;
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      const rawBuffer = event.target.result;
+      offset += rawBuffer.byteLength;
+      const isLastChunk = offset >= physicalFile.size;
+      const currentProgress = physicalFile.size
+        ? Math.round((offset / physicalFile.size) * 100)
+        : 100;
+
+      socket.emit("STREAM_FILE_CHUNK", {
+        room: transactionRoomId,
+        chunkData: rawBuffer,
+        fileName: physicalFile.name,
+        totalSize: physicalFile.size,
+        isLastChunk,
+      });
+
+      updateProgress(currentProgress);
+
+      if (!isLastChunk) {
+        readNextChunk();
+      } else {
+        setIsTransferring(false);
+        setTransferMessage(`${physicalFile.name} sent`);
+      }
+    };
+
+    reader.onerror = () => {
+      setIsTransferring(false);
+      setValidationError("Unable to read the selected file. Please try again.");
+      setTransferMessage("Ready to transfer");
+      updateProgress(0);
+    };
+
+    const readNextChunk = () => {
+      const slice = physicalFile.slice(offset, offset + CHUNK_SIZE);
+      if (slice.size > 0) {
+        reader.readAsArrayBuffer(slice);
+      }
+    };
+
+    readNextChunk();
+  };
+
+  const triggerActualDownload = (downloadUrl, fileName) => {
+    const ghostLink = document.createElement("a");
+    ghostLink.href = downloadUrl;
+    ghostLink.download = fileName || "fileflow_transfer";
+
+    document.body.appendChild(ghostLink);
+    ghostLink.click();
+
+    document.body.removeChild(ghostLink);
+    URL.revokeObjectURL(downloadUrl);
+  };
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
     setValidationError(null);
 
     if (!maxAllowedSize) {
-      setValidationError('Loading device information...');
+      setValidationError("Loading device information...");
       return;
     }
 
@@ -98,24 +233,29 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
   };
 
   const handleUploadClick = () => {
-    if (selectedFile && !validationError) {
-      // TODO: Implement actual file upload to socket
-      console.log('Uploading file:', selectedFile);
-      // socket.emit('file-upload', { file: selectedFile, roomName: transactionRoomId });
+    if (selectedFile && !validationError && transactionRoomId) {
+      setValidationError(null);
+      startFileStreaming(socket, selectedFile, transactionRoomId);
     }
   };
 
   if (!connectedDevice) {
     return (
       <div className="flex flex-col gap-4 mt-8">
-        <h2 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">Transfer File</h2>
+        <h2 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
+          Transfer File
+        </h2>
         <div className="relative border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] p-12 flex flex-col items-center justify-center gap-4 opacity-50">
           <div className="p-4 bg-[var(--color-background)] rounded-full border border-[var(--color-border)] shadow-sm">
             <UploadCloud className="w-8 h-8 text-[var(--color-text-secondary)]" />
           </div>
           <div className="text-center">
-            <p className="text-sm font-medium text-[var(--color-text-secondary)]">Select a device to connect</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">You need to connect to a device before transferring files.</p>
+            <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+              Select a device to connect
+            </p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              You need to connect to a device before transferring files.
+            </p>
           </div>
         </div>
       </div>
@@ -140,10 +280,15 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
       {/* File Type and Size Restrictions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {Object.entries(ALLOWED_FILE_TYPES).map(([key, category]) => (
-          <div key={key} className="border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] p-4">
-            <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">{category.label}</p>
+          <div
+            key={key}
+            className="border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] p-4"
+          >
+            <p className="text-xs font-medium text-[var(--color-text-primary)] mb-2">
+              {category.label}
+            </p>
             <p className="text-xs text-[var(--color-text-secondary)]">
-              {category.extensions.join(', ')}
+              {category.extensions.join(", ")}
             </p>
           </div>
         ))}
@@ -154,7 +299,10 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
         <div className="flex items-center gap-2 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
           <InfoIcon className="w-4 h-4 text-blue-400" />
           <p className="text-xs text-blue-300">
-            Maximum file size: <span className="font-medium">{formatFileSize(maxAllowedSize)}</span>
+            Maximum file size:{" "}
+            <span className="font-medium">
+              {formatFileSize(maxAllowedSize)}
+            </span>
           </p>
         </div>
       )}
@@ -162,16 +310,16 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
       {/* File Upload Area */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Upload Drop Zone */}
-        <motion.div 
+        <motion.div
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           whileHover={!isDragging ? { scale: 1.01 } : {}}
           className={`relative border-2 border-dashed rounded-2xl bg-[var(--color-surface)] p-8 flex flex-col items-center justify-center gap-4 transition-all cursor-pointer shadow-sm min-h-64 ${
-            isDragging 
-              ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5' 
-              : 'border-[var(--color-accent)] border-opacity-50 hover:border-opacity-100'
+            isDragging
+              ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
+              : "border-[var(--color-accent)] border-opacity-50 hover:border-opacity-100"
           }`}
           onClick={() => !selectedFile && fileInputRef.current?.click()}
         >
@@ -180,11 +328,11 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
             type="file"
             onChange={handleInputChange}
             accept={Object.values(ALLOWED_FILE_TYPES)
-              .flatMap(cat => cat.extensions)
-              .join(',')}
+              .flatMap((cat) => cat.extensions)
+              .join(",")}
             className="hidden"
           />
-          
+
           {!selectedFile ? (
             <>
               <div className="p-4 bg-[var(--color-background)] rounded-full border border-[var(--color-border)] shadow-sm">
@@ -192,9 +340,13 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
               </div>
               <div className="text-center">
                 <p className="text-sm font-medium text-[var(--color-text-primary)]">
-                  {isDragging ? 'Drop your file here' : 'Drag and drop your file here'}
+                  {isDragging
+                    ? "Drop your file here"
+                    : "Drag and drop your file here"}
                 </p>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">or click to browse</p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  or click to browse
+                </p>
               </div>
             </>
           ) : (
@@ -207,7 +359,9 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
                       <UploadCloud className="w-5 h-5 text-[var(--color-accent)]" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{selectedFile.name}</p>
+                      <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                        {selectedFile.name}
+                      </p>
                       <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                         Size: {formatFileSize(selectedFile.size)}
                       </p>
@@ -244,10 +398,10 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
               {!validationError && selectedFile && (
                 <button
                   onClick={handleUploadClick}
-                  disabled={!selectedFile || validationError !== null}
+                  disabled={!selectedFile || validationError !== null || isTransferring}
                   className="w-full px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
                 >
-                  Start Transfer
+                  {isTransferring ? "Transferring..." : "Start Transfer"}
                 </button>
               )}
             </div>
@@ -255,11 +409,28 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
         </motion.div>
 
         {/* Progress Indicator */}
-        <div className="flex items-center justify-center border border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] p-8 min-h-64">
-          <CircularProgress 
-            progress={transferProgress} 
-            label={isLoading ? 'Loading...' : transferProgress > 0 && transferProgress < 100 ? 'Transferring...' : 'Ready to transfer'} 
+        <div className="flex flex-col items-center justify-center gap-4 border border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] p-8 min-h-64">
+          <CircularProgress
+            progress={transferProgress}
+            label={isLoading ? "Loading..." : transferMessage}
           />
+
+          {downloadInfo && (
+            <div className="w-full max-w-sm p-4 bg-green-500/10 border border-green-500/30 rounded-lg text-left">
+              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {downloadInfo.name} is ready
+              </p>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                {formatFileSize(downloadInfo.size)} downloaded.
+              </p>
+              <button
+                onClick={() => triggerActualDownload(downloadInfo.url, downloadInfo.name)}
+                className="mt-3 inline-flex items-center justify-center rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-all"
+              >
+                Download Received File
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -268,7 +439,17 @@ export default function FileTransferArea({ connectedDevice, transactionRoomId, t
 
 // Simple info icon since we're not importing from lucide-react for this one
 const InfoIcon = ({ className }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  <svg
+    className={className}
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+    />
   </svg>
 );

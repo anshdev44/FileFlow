@@ -22,35 +22,35 @@ let activeDevices = {};
 
 
 const ALLOWED_FILE_EXTENSIONS = [
-  
-  '.mp4', '.mkv', '.mov', '.mp3', '.wav', '.png', '.jpeg', '.jpg', '.gif', '.webp',
 
-  '.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv',
+    '.mp4', '.mkv', '.mov', '.mp3', '.wav', '.png', '.jpeg', '.jpg', '.gif', '.webp',
 
-  '.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz'
+    '.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv',
+
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz'
 ];
 
 const BLOCKED_FILE_EXTENSIONS = ['.exe', '.dmg', '.pkg', '.bat', '.sh'];
 
 const getFileExtension = (filename) => {
-  if (filename.endsWith('.tar.gz')) return '.tar.gz';
-  const parts = filename.split('.');
-  return parts.length > 1 ? '.' + parts[parts.length - 1].toLowerCase() : '';
+    if (filename.endsWith('.tar.gz')) return '.tar.gz';
+    const parts = filename.split('.');
+    return parts.length > 1 ? '.' + parts[parts.length - 1].toLowerCase() : '';
 };
 
 const isFileAllowed = (filename) => {
-  const extension = getFileExtension(filename);
-  
+    const extension = getFileExtension(filename);
 
-  if (BLOCKED_FILE_EXTENSIONS.includes(extension)) {
-    return { allowed: false, reason: 'Executable files are not allowed' };
-  }
-  
-  if (ALLOWED_FILE_EXTENSIONS.includes(extension)) {
-    return { allowed: true };
-  }
-  
-  return { allowed: false, reason: 'File type not supported' };
+
+    if (BLOCKED_FILE_EXTENSIONS.includes(extension)) {
+        return { allowed: false, reason: 'Executable files are not allowed' };
+    }
+
+    if (ALLOWED_FILE_EXTENSIONS.includes(extension)) {
+        return { allowed: true };
+    }
+
+    return { allowed: false, reason: 'File type not supported' };
 };
 
 
@@ -223,7 +223,7 @@ const initializeSocket = (io) => {
                 });
             }
 
-            // Validate file size
+        
             if (fileSize > maxAllowedSize) {
                 const formatFileSize = (bytes) => {
                     if (bytes === 0) return '0 B';
@@ -232,7 +232,7 @@ const initializeSocket = (io) => {
                     const i = Math.floor(Math.log(bytes) / Math.log(k));
                     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
                 };
-                
+
                 return callback({
                     valid: false,
                     reason: `File size ${formatFileSize(fileSize)} exceeds maximum allowed size of ${formatFileSize(maxAllowedSize)}`
@@ -241,6 +241,22 @@ const initializeSocket = (io) => {
 
             callback({ valid: true });
         });
+
+        socket.on("STREAM_FILE_CHUNK", (paylaod) => {
+            const { room, chunkData, fileName, totalSize, isLastChunk } = paylaod;
+
+            socket.to(room).emit("RECEIVE_FILE_CHUNK", {
+                chunkData: chunkData,
+                fileName: fileName,
+                totalSize: totalSize,
+                isLastChunk: isLastChunk
+            });
+
+            if (isLastChunk) {
+                console.log(`Transfer of File is complete`);
+            }
+
+        })
 
         socket.on("disconnect", () => {
             //           const socketid = socket.id;
