@@ -25,7 +25,7 @@ export default function FileTransferArea({
   const [downloadInfo, setDownloadInfo] = useState(null);
   const fileInputRef = useRef(null);
   const dragCounterRef = useRef(0);
-  const incomingChunksRef = useRef([]);
+  const incomingChunksRef = useRef([]); //this is help us to not trigger page reload on every chunk recieved
   const incomingSizeRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -100,7 +100,6 @@ export default function FileTransferArea({
         incomingSizeRef.current = 0;
       }
     };
-
     socket.on("RECEIVE_FILE_CHUNK", handleReceiveFileChunk);
 
     return () => {
@@ -130,22 +129,25 @@ export default function FileTransferArea({
         ? Math.round((offset / physicalFile.size) * 100)
         : 100;
 
-      socket.emit("STREAM_FILE_CHUNK", {
-        room: transactionRoomId,
-        chunkData: rawBuffer,
-        fileName: physicalFile.name,
-        totalSize: physicalFile.size,
-        isLastChunk,
-      });
-
-      updateProgress(currentProgress);
-
-      if (!isLastChunk) {
-        readNextChunk();
-      } else {
-        setIsTransferring(false);
-        setTransferMessage(`${physicalFile.name} sent`);
-      }
+      socket.emit(
+        "STREAM_FILE_CHUNK",
+        {
+          room: transactionRoomId,
+          chunkData: rawBuffer,
+          fileName: physicalFile.name,
+          totalSize: physicalFile.size,
+          isLastChunk,
+        },
+        () => {
+          updateProgress(currentProgress);
+          if (!isLastChunk) {
+            readNextChunk();
+          } else {
+            setIsTransferring(false);
+            setTransferMessage(`${physicalFile.name} sent`);
+          }
+        },
+      );
     };
 
     reader.onerror = () => {
@@ -398,7 +400,9 @@ export default function FileTransferArea({
               {!validationError && selectedFile && (
                 <button
                   onClick={handleUploadClick}
-                  disabled={!selectedFile || validationError !== null || isTransferring}
+                  disabled={
+                    !selectedFile || validationError !== null || isTransferring
+                  }
                   className="w-full px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
                 >
                   {isTransferring ? "Transferring..." : "Start Transfer"}
@@ -424,7 +428,9 @@ export default function FileTransferArea({
                 {formatFileSize(downloadInfo.size)} downloaded.
               </p>
               <button
-                onClick={() => triggerActualDownload(downloadInfo.url, downloadInfo.name)}
+                onClick={() =>
+                  triggerActualDownload(downloadInfo.url, downloadInfo.name)
+                }
                 className="mt-3 inline-flex items-center justify-center rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-all"
               >
                 Download Received File

@@ -223,7 +223,7 @@ const initializeSocket = (io) => {
                 });
             }
 
-        
+
             if (fileSize > maxAllowedSize) {
                 const formatFileSize = (bytes) => {
                     if (bytes === 0) return '0 B';
@@ -242,7 +242,7 @@ const initializeSocket = (io) => {
             callback({ valid: true });
         });
 
-        socket.on("STREAM_FILE_CHUNK", (paylaod) => {
+        socket.on("STREAM_FILE_CHUNK", (paylaod,callback) => {
             const { room, chunkData, fileName, totalSize, isLastChunk } = paylaod;
 
             socket.to(room).emit("RECEIVE_FILE_CHUNK", {
@@ -251,6 +251,10 @@ const initializeSocket = (io) => {
                 totalSize: totalSize,
                 isLastChunk: isLastChunk
             });
+
+            if (typeof callback === "function") {
+                callback();
+            }
 
             if (isLastChunk) {
                 console.log(`Transfer of File is complete`);
