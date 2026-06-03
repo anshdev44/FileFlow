@@ -74,7 +74,7 @@ export default function FileTransferArea({
       return;
     }
 
-    const handleReceiveFileChunk = (payload,serverCallback) => {
+    const handleReceiveFileChunk = (payload) => {
       const { chunkData, isLastChunk, fileName, totalSize } = payload;
       const chunkLength = chunkData?.byteLength ?? chunkData?.length ?? 0;
       incomingChunksRef.current.push(chunkData);
@@ -100,12 +100,13 @@ export default function FileTransferArea({
         incomingChunksRef.current = [];
         incomingSizeRef.current = 0;
       }
-      try{
-         if(typeof serverCallback==="function"){
-          serverCallback();
-         }
-      }catch(err){
-        console.log("Failed to Process Chunk")
+      try {
+        socket.emit("CHUNK_ACKNOWLEDGE", {
+          room: transactionRoomId,
+          isLastChunk: isLastChunk,
+        });
+      } catch (err) {
+        console.log("Failed to Process Chunk");
       }
     };
     socket.on("RECEIVE_FILE_CHUNK", handleReceiveFileChunk);
@@ -125,39 +126,47 @@ export default function FileTransferArea({
     setDownloadInfo(null);
     updateProgress(0);
 
+   
     const CHUNK_SIZE = 64 * 1024;
     let offset = 0;
     const reader = new FileReader();
 
-    reader.onload = (event) => {
-      const rawBuffer = event.target.result;
-      offset += rawBuffer.byteLength;
-      const isLastChunk = offset >= physicalFile.size;
+  
+    socket.on("SEND_NEXT_CHUNK", () => {
+     
       const currentProgress = physicalFile.size
         ? Math.round((offset / physicalFile.size) * 100)
         : 100;
 
-      socket.emit(
-        "STREAM_FILE_CHUNK",
-        {
-          room: transactionRoomId,
-          chunkData: rawBuffer,
-          fileName: physicalFile.name,
-          totalSize: physicalFile.size,
-          isLastChunk,
-        },
-        () => {
-          updateProgress(currentProgress);
-          if (!isLastChunk) {
-            readNextChunk();
-          } else {
-            setIsTransferring(false);
-            setTransferMessage(`${physicalFile.name} sent`);
-          }
-        },
-      );
+      updateProgress(currentProgress);
+
+      const isLastChunk = offset >= physicalFile.size;
+
+      if (!isLastChunk) {
+        readNextChunk();
+      } else {
+        setIsTransferring(false);
+        setTransferMessage("Transfer Complete!");
+        socket.off("SEND_NEXT_CHUNK"); 
+      }
+    });
+
+   
+    reader.onload = (event) => {
+      const rawBuffer = event.target.result;
+      offset += rawBuffer.byteLength;
+      const isLastChunk = offset >= physicalFile.size;
+
+      socket.emit("STREAM_FILE_CHUNK", {
+        room: transactionRoomId,
+        chunkData: rawBuffer,
+        fileName: physicalFile.name,
+        totalSize: physicalFile.size,
+        isLastChunk,
+      });
     };
 
+   
     reader.onerror = () => {
       setIsTransferring(false);
       setValidationError("Unable to read the selected file. Please try again.");
@@ -172,6 +181,7 @@ export default function FileTransferArea({
       }
     };
 
+   
     readNextChunk();
   };
 

@@ -250,16 +250,7 @@ const initializeSocket = (io) => {
                 fileName: fileName,
                 totalSize: totalSize,
                 isLastChunk: isLastChunk
-            }, () => {
-                try {
-                    if (typeof callback === "function") {
-                        callback();
-                    }
-                } catch (err) {
-                    console.log("unable to send more chunks")
-                }
-
-            });
+            })
 
             if (isLastChunk) {
                 console.log(`Transfer of File is complete`);
@@ -267,6 +258,13 @@ const initializeSocket = (io) => {
 
             console.log("Teleported a chunk from backend")
 
+        })
+
+        socket.on("CHUNK_ACKNOWLEDGE", (payload) => {
+            socket.to(payload.room).emit("SEND_NEXT_CHUNK");
+              if (payload.isLastChunk) {
+                io.in(payload.room).socketsLeave(payload.room);
+            }
         })
 
         socket.on("disconnect", () => {
