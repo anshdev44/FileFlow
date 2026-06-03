@@ -214,7 +214,7 @@ const initializeSocket = (io) => {
         socket.on("Validate-File", (payload, callback) => {
             const { filename, fileSize, maxAllowedSize } = payload;
 
-            // Validate file type
+
             const fileValidation = isFileAllowed(filename);
             if (!fileValidation.allowed) {
                 return callback({
@@ -242,7 +242,7 @@ const initializeSocket = (io) => {
             callback({ valid: true });
         });
 
-        socket.on("STREAM_FILE_CHUNK", (paylaod,callback) => {
+        socket.on("STREAM_FILE_CHUNK", (paylaod, callback) => {
             const { room, chunkData, fileName, totalSize, isLastChunk } = paylaod;
 
             socket.to(room).emit("RECEIVE_FILE_CHUNK", {
@@ -250,15 +250,22 @@ const initializeSocket = (io) => {
                 fileName: fileName,
                 totalSize: totalSize,
                 isLastChunk: isLastChunk
-            });
+            }, () => {
+                try {
+                    if (typeof callback === "function") {
+                        callback();
+                    }
+                } catch (err) {
+                    console.log("unable to send more chunks")
+                }
 
-            if (typeof callback === "function") {
-                callback();
-            }
+            });
 
             if (isLastChunk) {
                 console.log(`Transfer of File is complete`);
             }
+
+            console.log("Teleported a chunk from backend")
 
         })
 

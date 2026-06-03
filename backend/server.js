@@ -14,6 +14,9 @@ const io = new Server(server, {
   cors: {
     origin: "*",
   },
+  pingTimeout: 60000, //i am adding these lines because a socket io connection always sends signal is the connection died or still working but when tranferring a large file this signal gets ignored due to which file transfers fails  
+  pingInterval: 25000,
+  maxHttpBufferSize: 1e8
 });
 
 initializeSocket(io);
@@ -23,7 +26,7 @@ app.use("/healthcheck", healthcheckRoute);
 // endpoint to check current Wi-Fi connection
 app.get("/network", checkconnection);
 
-app.use('/getip',checkip)
+app.use('/getip', checkip)
 
 app.get("/", (req, res) => {
   res.send("Hello World!");

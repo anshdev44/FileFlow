@@ -38,34 +38,28 @@ function App() {
       registerDevice(deviceName);
     }
     
-    // Cleanup on unmount
+   
     return () => {
       socket.off('Register-device');
     };
   }, []);
 
-  // Connection flow socket listeners
+
   useEffect(() => {
-    // Someone is requesting to connect to us
     const handleConnectionRequest = ({ senderName, SenderSocketid }) => {
       setConnectionRequest({ senderName, senderSocketId: SenderSocketid });
     };
-
-    // Our request was accepted
     const handleConnectionAccepted = ({ transactionRoomId, acceptorName, acceptorSocketId }) => {
       setTransactionRoomId(transactionRoomId);
       setConnectedDevice({ name: acceptorName, socketId: acceptorSocketId });
       setPendingDeviceId(null);
       addToast('Connection accepted! You are now connected.', 'success');
     };
-
-    // Our request was declined
     const handleConnectionDeclined = () => {
       setPendingDeviceId(null);
       addToast('Connection request was declined.', 'error');
     };
 
-    // Room was closed by the other user
     const handleRoomClosed = () => {
       const deviceName = connectedDevice?.name || 'device';
       setConnectedDevice(null);

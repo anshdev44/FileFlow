@@ -74,7 +74,7 @@ export default function FileTransferArea({
       return;
     }
 
-    const handleReceiveFileChunk = (payload) => {
+    const handleReceiveFileChunk = (payload,serverCallback) => {
       const { chunkData, isLastChunk, fileName, totalSize } = payload;
       const chunkLength = chunkData?.byteLength ?? chunkData?.length ?? 0;
       incomingChunksRef.current.push(chunkData);
@@ -85,6 +85,7 @@ export default function FileTransferArea({
         : 0;
       updateProgress(currentProgress);
       setTransferMessage(`Receiving ${fileName}...`);
+      console.log("Recieved a Chunk");
 
       if (isLastChunk) {
         const fileBlob = new Blob(incomingChunksRef.current);
@@ -98,6 +99,13 @@ export default function FileTransferArea({
         setIsTransferring(false);
         incomingChunksRef.current = [];
         incomingSizeRef.current = 0;
+      }
+      try{
+         if(typeof serverCallback==="function"){
+          serverCallback();
+         }
+      }catch(err){
+        console.log("Failed to Process Chunk")
       }
     };
     socket.on("RECEIVE_FILE_CHUNK", handleReceiveFileChunk);
