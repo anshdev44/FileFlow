@@ -126,14 +126,22 @@ export default function FileTransferArea({
     setDownloadInfo(null);
     updateProgress(0);
 
-   
     const CHUNK_SIZE = 64 * 1024;
+
+    if (physicalFile.size > 500 * 1024 * 1024) {
+     //Fileswith size greater than 500mb gets 1mb chunks
+      CHUNK_SIZE = 1024 * 1024; 
+    } else if (physicalFile.size > 100 * 1024 * 1024) {
+      // Files with size between 100mb and 500mb gets 512kb chunks 
+      CHUNK_SIZE = 512 * 1024;
+    } else if (physicalFile.size > 10 * 1024 * 1024) {
+      // Files with size 10MB and 100MB get 256KB chunks
+      CHUNK_SIZE = 256 * 1024;
+    }
     let offset = 0;
     const reader = new FileReader();
 
-  
     socket.on("SEND_NEXT_CHUNK", () => {
-     
       const currentProgress = physicalFile.size
         ? Math.round((offset / physicalFile.size) * 100)
         : 100;
@@ -147,11 +155,10 @@ export default function FileTransferArea({
       } else {
         setIsTransferring(false);
         setTransferMessage("Transfer Complete!");
-        socket.off("SEND_NEXT_CHUNK"); 
+        socket.off("SEND_NEXT_CHUNK");
       }
     });
 
-   
     reader.onload = (event) => {
       const rawBuffer = event.target.result;
       offset += rawBuffer.byteLength;
@@ -166,7 +173,6 @@ export default function FileTransferArea({
       });
     };
 
-   
     reader.onerror = () => {
       setIsTransferring(false);
       setValidationError("Unable to read the selected file. Please try again.");
@@ -181,7 +187,6 @@ export default function FileTransferArea({
       }
     };
 
-   
     readNextChunk();
   };
 
