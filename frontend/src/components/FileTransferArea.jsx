@@ -15,8 +15,14 @@ export default function FileTransferArea({
   transferProgress,
   onTransferProgress,
   onDisconnect,
+  dataChannelRef,
+  dataChannelOpen,
 }) {
   const [maxAllowedSize, setMaxAllowedSize] = useState(null);
+  const sendingFileRef = useRef(null);
+  const sendOffsetRef = useRef(0);
+  const chunkSizeRef = useRef(64 * 1024);
+  const incomingFileMetaRef = useRef({ fileName: "", totalSize: 0 });
   const [selectedFile, setSelectedFile] = useState(null);
   const [validationError, setValidationError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -118,6 +124,176 @@ export default function FileTransferArea({
     };
   }, [transactionRoomId]);
 
+  useEffect(() => {
+    const channel = dataChannelRef?.current;
+    if (!channel || !transactionRoomId) return;
+
+    const handleChannelMessage = async (event) => {
+      const payload = event.data;
+
+      if (typeof payload === "string") {
+        let message;
+        try {
+          message = JSON.parse(payload);
+        } catch (err) {
+          console.error("Failed to parse WebRTC JSON payload", err);
+          return;
+        }
+
+        if (message.type === "file-init") {
+          incomingFileMetaRef.current = {
+            fileName: message.fileName,
+            totalSize: message.totalSize,
+          };
+          incomingChunksRef.current = [];
+          incomingSizeRef.current = 0;
+          setIsTransferring(true);
+          setTransferMessage(`Receiving ${message.fileName}...`);
+          updateProgress(0);
+          channel.send(JSON.stringify({ type: "file-ready" }));
+          return;
+        }
+
+        if (message.type === "file-ready") {
+          if (!sendingFileRef.current) return;
+          setTransferMessage(`Sending ${sendingFileRef.current.name}...`);
+          sendNextChunk();
+          return;
+        }
+
+        if (message.type === "chunk-ack") {
+          if (!sendingFileRef.current) return;
+          const currentProgress = sendingFileRef.current.size
+            ? Math.round((message.receivedSize / sendingFileRef.current.size) * 100)
+            : 0;
+          updateProgress(currentProgress);
+          setTransferMessage(`Sent ${sendingFileRef.current.name}: ${currentProgress}%`);
+
+          if (message.isLastChunk) {
+            setIsTransferring(false);
+            setTransferMessage("Transfer complete!");
+            sendingFileRef.current = null;
+            sendOffsetRef.current = 0;
+            return;
+          }
+
+          sendNextChunk();
+          return;
+        }
+
+        return;
+      }
+
+      const chunkBuffer =
+        payload instanceof Blob ? await payload.arrayBuffer() : payload;
+      incomingChunksRef.current.push(chunkBuffer);
+      incomingSizeRef.current += chunkBuffer.byteLength;
+
+      const currentProgress = incomingFileMetaRef.current.totalSize
+        ? Math.round(
+            (incomingSizeRef.current / incomingFileMetaRef.current.totalSize) * 100
+          )
+        : 0;
+      updateProgress(currentProgress);
+      setTransferMessage(`Receiving ${incomingFileMetaRef.current.fileName}...`);
+
+      const isLastChunk = incomingSizeRef.current >= incomingFileMetaRef.current.totalSize;
+      if (isLastChunk) {
+        const fileBlob = new Blob(incomingChunksRef.current);
+        const downloadUrl = URL.createObjectURL(fileBlob);
+        setDownloadInfo({
+          name: incomingFileMetaRef.current.fileName,
+          size: incomingSizeRef.current,
+          url: downloadUrl,
+        });
+        setTransferMessage(`${incomingFileMetaRef.current.fileName} received`);
+        setIsTransferring(false);
+        incomingChunksRef.current = [];
+        incomingSizeRef.current = 0;
+      }
+
+      channel.send(
+        JSON.stringify({
+          type: "chunk-ack",
+          receivedSize: incomingSizeRef.current,
+          isLastChunk,
+        })
+      );
+    };
+
+    channel.onmessage = handleChannelMessage;
+
+    return () => {
+      channel.onmessage = null;
+    };
+  }, [dataChannelOpen, transactionRoomId, dataChannelRef]);
+
+  const getChunkSize = (fileSize) => {
+    if (fileSize > 500 * 1024 * 1024) {
+      return 1024 * 1024;
+    }
+    if (fileSize > 100 * 1024 * 1024) {
+      return 512 * 1024;
+    }
+    if (fileSize > 10 * 1024 * 1024) {
+      return 256 * 1024;
+    }
+    return 64 * 1024;
+  };
+
+  const sendNextChunk = async () => {
+    const channel = dataChannelRef?.current;
+    const file = sendingFileRef.current;
+    if (!channel || !file) return;
+
+    const offset = sendOffsetRef.current;
+    if (offset >= file.size) {
+      return;
+    }
+
+    const slice = file.slice(offset, offset + chunkSizeRef.current);
+    const arrayBuffer = await slice.arrayBuffer();
+
+    if (channel.bufferedAmount > 8 * 1024 * 1024) {
+      await new Promise((resolve) => {
+        channel.onbufferedamountlow = () => {
+          channel.onbufferedamountlow = null;
+          resolve();
+        };
+      });
+    }
+
+    channel.send(arrayBuffer);
+    sendOffsetRef.current += arrayBuffer.byteLength;
+  };
+
+  const startWebRTCTransfer = (physicalFile) => {
+    const channel = dataChannelRef?.current;
+    if (!channel || !dataChannelOpen) {
+      setValidationError(
+        "WebRTC channel is not ready yet. Wait for the connection to open."
+      );
+      return;
+    }
+
+    chunkSizeRef.current = getChunkSize(physicalFile.size);
+    sendingFileRef.current = physicalFile;
+    sendOffsetRef.current = 0;
+    setIsTransferring(true);
+    setIsAwaitingPeer(true);
+    setTransferMessage(`Preparing to send ${physicalFile.name}...`);
+    updateProgress(0);
+
+    channel.send(
+      JSON.stringify({
+        type: "file-init",
+        fileName: physicalFile.name,
+        totalSize: physicalFile.size,
+        chunkSize: chunkSizeRef.current,
+      })
+    );
+  };
+
   const startFileStreaming = (socket, physicalFile, transactionRoomId) => {
     if (!transactionRoomId || !physicalFile) return;
 
@@ -126,13 +302,13 @@ export default function FileTransferArea({
     setDownloadInfo(null);
     updateProgress(0);
 
-    const CHUNK_SIZE = 64 * 1024;
+    let CHUNK_SIZE = 64 * 1024;
 
     if (physicalFile.size > 500 * 1024 * 1024) {
-     //Fileswith size greater than 500mb gets 1mb chunks
+     // Files with size greater than 500MB gets 1MB chunks
       CHUNK_SIZE = 1024 * 1024; 
     } else if (physicalFile.size > 100 * 1024 * 1024) {
-      // Files with size between 100mb and 500mb gets 512kb chunks 
+      // Files with size between 100MB and 500MB get 512KB chunks
       CHUNK_SIZE = 512 * 1024;
     } else if (physicalFile.size > 10 * 1024 * 1024) {
       // Files with size 10MB and 100MB get 256KB chunks
@@ -260,7 +436,11 @@ export default function FileTransferArea({
   const handleUploadClick = () => {
     if (selectedFile && !validationError && transactionRoomId) {
       setValidationError(null);
-      startFileStreaming(socket, selectedFile, transactionRoomId);
+      if (dataChannelOpen && dataChannelRef?.current) {
+        startWebRTCTransfer(selectedFile);
+      } else {
+        startFileStreaming(socket, selectedFile, transactionRoomId);
+      }
     }
   };
 

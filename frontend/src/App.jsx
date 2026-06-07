@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { io } from 'socket.io-client';
-import Navbar from './components/Navbar';
-import DeviceList from './components/DeviceList';
-import FileTransferArea from './components/FileTransferArea';
-import DeviceRegistrationModal from './components/DeviceRegistrationModal';
-import ConnectionRequestModal from './components/ConnectionRequestModal';
-import { ToastContainer } from './components/Toast';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { io } from "socket.io-client";
+import Navbar from "./components/Navbar";
+import DeviceList from "./components/DeviceList";
+import FileTransferArea from "./components/FileTransferArea";
+import DeviceRegistrationModal from "./components/DeviceRegistrationModal";
+import ConnectionRequestModal from "./components/ConnectionRequestModal";
+import { ToastContainer } from "./components/Toast";
 
 export const socket = io();
 
@@ -20,72 +20,168 @@ function App() {
   const [connectedDevice, setConnectedDevice] = useState(null); // { name, socketId }
   const [transactionRoomId, setTransactionRoomId] = useState(null);
   const [transferProgress, setTransferProgress] = useState(0);
+  const [dataChannelOpen, setDataChannelOpen] = useState(false);
+  const peerConnectionRef = useRef(null);
+  const dataChannelRef = useRef(null);
+  const transactionRoomIdRef = useRef(null);
+  const isInitiatorRef = useRef(false);
 
-  const addToast = useCallback((message, type = 'info') => {
+  const addToast = useCallback((message, type = "info") => {
     const id = ++toastIdCounter;
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts((prev) => [...prev, { id, message, type }]);
   }, []);
 
   const dismissToast = useCallback((id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   useEffect(() => {
-    const deviceName = localStorage.getItem('fileflow_device_name');
+    const deviceName = localStorage.getItem("fileflow_device_name");
     if (!deviceName) {
       setShowRegistration(true);
     } else {
       registerDevice(deviceName);
     }
-    
-   
+
     return () => {
-      socket.off('Register-device');
+      socket.off("Register-device");
     };
   }, []);
 
+  useEffect(() => {
+    transactionRoomIdRef.current = transactionRoomId;
+  }, [transactionRoomId]);
+
+  useEffect(() => {
+    const configuration = {
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    };
+
+    const peerConnection = new RTCPeerConnection(configuration);
+    peerConnectionRef.current = peerConnection;
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("WEBRTC_ICE_CANDIDATE", {
+          targetRoom: transactionRoomIdRef.current,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    peerConnection.ondatachannel = (event) => {
+      const receiveChannel = event.channel;
+      dataChannelRef.current = receiveChannel;
+
+      receiveChannel.onopen = () => {
+        setDataChannelOpen(true);
+        console.log("🔥 P2P Pipeline OPEN! Ready to receive data.");
+      };
+
+      receiveChannel.onclose = () => {
+        setDataChannelOpen(false);
+        console.log("WebRTC receive channel closed.");
+      };
+    };
+
+    const handleRemoteIceCandidate = async ({ candidate }) => {
+      try {
+        await peerConnection.addIceCandidate(candidate);
+      } catch (e) {
+        console.error("Error adding received ice candidate", e);
+      }
+    };
+
+    const handleWebRtcOffer = async (incomingOffer) => {
+      try {
+        await peerConnection.setRemoteDescription(
+          new RTCSessionDescription(incomingOffer.sdpOffer)
+        );
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        socket.emit("WEBRTC_ANSWER", {
+          targetRoom: transactionRoomIdRef.current,
+          sdpAnswer: answer,
+        });
+      } catch (e) {
+        console.error("Error handling WebRTC offer", e);
+      }
+    };
+
+    const handleWebRtcAnswer = async (incomingAnswer) => {
+      try {
+        const remoteDesc = new RTCSessionDescription(incomingAnswer.sdpAnswer);
+        await peerConnection.setRemoteDescription(remoteDesc);
+        console.log("WebRTC handshake complete! ICE candidates will finish connecting.");
+      } catch (e) {
+        console.error("Error handling WebRTC answer", e);
+      }
+    };
+
+    socket.on("WEBRTC_ICE_CANDIDATE", handleRemoteIceCandidate);
+    socket.on("WEBRTC_OFFER", handleWebRtcOffer);
+    socket.on("WEBRTC_ANSWER", handleWebRtcAnswer);
+
+    return () => {
+      socket.off("WEBRTC_ICE_CANDIDATE", handleRemoteIceCandidate);
+      socket.off("WEBRTC_OFFER", handleWebRtcOffer);
+      socket.off("WEBRTC_ANSWER", handleWebRtcAnswer);
+      peerConnection.close();
+    };
+  }, []);
 
   useEffect(() => {
     const handleConnectionRequest = ({ senderName, SenderSocketid }) => {
       setConnectionRequest({ senderName, senderSocketId: SenderSocketid });
     };
-    const handleConnectionAccepted = ({ transactionRoomId, acceptorName, acceptorSocketId }) => {
+    const handleConnectionAccepted = ({
+      transactionRoomId,
+      acceptorName,
+      acceptorSocketId,
+    }) => {
       setTransactionRoomId(transactionRoomId);
+      transactionRoomIdRef.current = transactionRoomId;
       setConnectedDevice({ name: acceptorName, socketId: acceptorSocketId });
       setPendingDeviceId(null);
-      addToast('Connection accepted! You are now connected.', 'success');
+      addToast("Connection accepted! You are now connected.", "success");
+      if (isInitiatorRef.current) {
+        startCall();
+      }
     };
     const handleConnectionDeclined = () => {
       setPendingDeviceId(null);
-      addToast('Connection request was declined.', 'error');
+      addToast("Connection request was declined.", "error");
     };
 
     const handleRoomClosed = () => {
-      const deviceName = connectedDevice?.name || 'device';
+      const deviceName = connectedDevice?.name || "device";
       setConnectedDevice(null);
       setTransactionRoomId(null);
       setTransferProgress(0);
-      addToast(`${deviceName} has disconnected from the room.`, 'info');
+      addToast(`${deviceName} has disconnected from the room.`, "info");
     };
 
-    socket.on('Connection-Request', handleConnectionRequest);
-    socket.on('Connection-Accepted', handleConnectionAccepted);
-    socket.on('Connection-Declined', handleConnectionDeclined);
-    socket.on('Room-Closed-Req', handleRoomClosed);
+    socket.on("Connection-Request", handleConnectionRequest);
+    socket.on("Connection-Accepted", handleConnectionAccepted);
+    socket.on("Connection-Declined", handleConnectionDeclined);
+    socket.on("Room-Closed-Req", handleRoomClosed);
 
     return () => {
-      socket.off('Connection-Request', handleConnectionRequest);
-      socket.off('Connection-Accepted', handleConnectionAccepted);
-      socket.off('Connection-Declined', handleConnectionDeclined);
-      socket.off('Room-Closed-Req', handleRoomClosed);
+      socket.off("Connection-Request", handleConnectionRequest);
+      socket.off("Connection-Accepted", handleConnectionAccepted);
+      socket.off("Connection-Declined", handleConnectionDeclined);
+      socket.off("Room-Closed-Req", handleRoomClosed);
     };
   }, [addToast, connectedDevice?.name]);
 
+
   const registerDevice = async (name) => {
     try {
-      let clientIp = '127.0.0.1'; // Fallback if IP fetch fails
+      let clientIp = "127.0.0.1"; // Fallback if IP fetch fails
       try {
-        const ipResponse = await fetch('/getip');
+        const ipResponse = await fetch("/getip");
         if (ipResponse.ok) {
           const ipData = await ipResponse.json();
           if (ipData.success && ipData.data) {
@@ -93,32 +189,35 @@ function App() {
             const allIps = Object.values(ipData.data).flat();
             if (allIps.length > 0) {
               // Prefer common LAN ranges: 192.168.x.x, 10.x.x.x, 172.16-31.x.x
-              const lanIp = allIps.find(ip => {
-                return ip.startsWith('192.168.') || ip.startsWith('10.') ||
-                  /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+              const lanIp = allIps.find((ip) => {
+                return (
+                  ip.startsWith("192.168.") ||
+                  ip.startsWith("10.") ||
+                  /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
+                );
               });
               clientIp = lanIp || allIps[0];
             }
           }
         }
       } catch (e) {
-        console.error('Failed to get IP before registering:', e);
+        console.error("Failed to get IP before registering:", e);
       }
 
-      const deviceType = 'desktop';
-      
-      // Store device info in localStorage for file transfer validation
-      localStorage.setItem('fileflow_device_type', deviceType);
-      localStorage.setItem('fileflow_device_ip', clientIp);
+      const deviceType = "desktop";
 
-      socket.emit('Register-device', {
+      // Store device info in localStorage for file transfer validation
+      localStorage.setItem("fileflow_device_type", deviceType);
+      localStorage.setItem("fileflow_device_ip", clientIp);
+
+      socket.emit("Register-device", {
         deviceName: name,
         deviceType: deviceType,
-        clientIp
+        clientIp,
       });
       setIsRegistered(true);
     } catch (error) {
-      console.error('Failed to register device:', error);
+      console.error("Failed to register device:", error);
       setIsRegistered(true); // Continue anyway for now
     }
   };
@@ -130,50 +229,94 @@ function App() {
 
   // Send connection request to a device
   const handleConnect = (device) => {
-    const senderName = localStorage.getItem('fileflow_device_name') || 'Unknown';
+    const senderName =
+      localStorage.getItem("fileflow_device_name") || "Unknown";
+    isInitiatorRef.current = true;
     setPendingDeviceId(device.id);
-    socket.emit('Connection', {
+    socket.emit("Connection", {
       socketID: device.id,
-      senderName
+      senderName,
     });
-    addToast(`Connection request sent to ${device.name}`, 'info');
+    addToast(`Connection request sent to ${device.name}`, "info");
   };
 
   // Accept incoming connection
   const handleAcceptConnection = () => {
     if (!connectionRequest) return;
-    const myName = localStorage.getItem('fileflow_device_name') || 'Unknown';
-    socket.emit('Respond-Connection', {
+    isInitiatorRef.current = false;
+    const myName = localStorage.getItem("fileflow_device_name") || "Unknown";
+    socket.emit("Respond-Connection", {
       accepted: true,
       senderSocketId: connectionRequest.senderSocketId,
-      acceptorName: myName
+      acceptorName: myName,
     });
-    setConnectedDevice({ name: connectionRequest.senderName, socketId: connectionRequest.senderSocketId });
+    setConnectedDevice({
+      name: connectionRequest.senderName,
+      socketId: connectionRequest.senderSocketId,
+    });
     // The room ID follows the backend pattern: {senderSocketId}-{acceptorSocketId}
-    setTransactionRoomId(`${connectionRequest.senderSocketId}-${socket.id}`);
-    addToast(`Connected with ${connectionRequest.senderName}!`, 'success');
+    const roomId = `${connectionRequest.senderSocketId}-${socket.id}`;
+    setTransactionRoomId(roomId);
+    transactionRoomIdRef.current = roomId;
+    addToast(`Connected with ${connectionRequest.senderName}!`, "success");
     setConnectionRequest(null);
+  };
+
+  const startCall = async () => {
+    const peerConnection = peerConnectionRef.current;
+    if (!peerConnection) {
+      console.error("PeerConnection is not initialized");
+      return;
+    }
+
+    try {
+      const dataChannel = peerConnection.createDataChannel("fileTransferChannel");
+      dataChannelRef.current = dataChannel;
+
+      dataChannel.onopen = () => {
+        setDataChannelOpen(true);
+        console.log("P2P Pipeline OPEN! Ready to send data.");
+      };
+
+      dataChannel.onclose = () => {
+        setDataChannelOpen(false);
+        console.log("WebRTC send channel closed.");
+      };
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit("WEBRTC_OFFER", {
+        targetRoom: transactionRoomIdRef.current,
+        sdpOffer: offer,
+      });
+    } catch (e) {
+      console.error("Error creating or sending WebRTC offer", e);
+    }
   };
 
   // Decline incoming connection
   const handleDeclineConnection = () => {
     if (!connectionRequest) return;
-    socket.emit('Respond-Connection', {
+    socket.emit("Respond-Connection", {
       accepted: false,
-      senderSocketId: connectionRequest.senderSocketId
+      senderSocketId: connectionRequest.senderSocketId,
     });
-    addToast('Connection request declined.', 'info');
+    addToast("Connection request declined.", "info");
     setConnectionRequest(null);
   };
 
   // Disconnect from current session
   const handleDisconnect = () => {
     if (transactionRoomId) {
-      socket.emit('Disconnect-room', {
-        RoomName: transactionRoomId
+      socket.emit("Disconnect-room", {
+        RoomName: transactionRoomId,
       });
     }
-    addToast(`Disconnected from ${connectedDevice?.name || 'device'}.`, 'info');
+    isInitiatorRef.current = false;
+    setDataChannelOpen(false);
+    dataChannelRef.current = null;
+    transactionRoomIdRef.current = null;
+    addToast(`Disconnected from ${connectedDevice?.name || "device"}.`, "info");
     setConnectedDevice(null);
     setTransactionRoomId(null);
     setTransferProgress(0);
@@ -181,8 +324,10 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--color-background)] text-[var(--color-text-primary)] selection:bg-white selection:text-black font-sans relative">
-      {showRegistration && <DeviceRegistrationModal onComplete={handleRegistrationComplete} />}
-      
+      {showRegistration && (
+        <DeviceRegistrationModal onComplete={handleRegistrationComplete} />
+      )}
+
       {connectionRequest && (
         <ConnectionRequestModal
           senderName={connectionRequest.senderName}
@@ -196,16 +341,20 @@ function App() {
       <Navbar />
       <main className="max-w-6xl mx-auto px-6 py-12 flex flex-col gap-8">
         <header className="mb-2">
-          <h1 className="text-3xl font-semibold tracking-tight text-[var(--color-text-primary)]">Overview</h1>
-          <p className="text-[var(--color-text-secondary)] mt-2 text-sm">Send and receive files seamlessly on your local network.</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+            Overview
+          </h1>
+          <p className="text-[var(--color-text-secondary)] mt-2 text-sm">
+            Send and receive files seamlessly on your local network.
+          </p>
         </header>
-        
+
         <DeviceList
           onConnect={handleConnect}
           pendingDeviceId={pendingDeviceId}
           connectedDeviceId={connectedDevice?.socketId}
         />
-        
+
         <div className="flex flex-col gap-8">
           <FileTransferArea
             connectedDevice={connectedDevice}
@@ -213,6 +362,8 @@ function App() {
             transferProgress={transferProgress}
             onTransferProgress={setTransferProgress}
             onDisconnect={handleDisconnect}
+            dataChannelRef={dataChannelRef}
+            dataChannelOpen={dataChannelOpen}
           />
         </div>
       </main>
